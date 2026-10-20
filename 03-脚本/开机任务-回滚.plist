@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.hidpi.wsconfig</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>/bin/cp "/Library/Application Support/HiDPI/windowserver-before.bak.plist" "/Users/velo/Library/Preferences/ByHost/com.apple.windowserver.E11FAD6A-CBA4-5A5C-8C57-C620C5465D39.plist"; /usr/sbin/chown velo:staff "/Users/velo/Library/Preferences/ByHost/com.apple.windowserver.E11FAD6A-CBA4-5A5C-8C57-C620C5465D39.plist"; /bin/chmod 600 "/Users/velo/Library/Preferences/ByHost/com.apple.windowserver.E11FAD6A-CBA4-5A5C-8C57-C620C5465D39.plist"; /bin/rm -f /Library/LaunchDaemons/local.hidpi.wsconfig.plist</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>

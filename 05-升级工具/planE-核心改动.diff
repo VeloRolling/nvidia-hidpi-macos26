@@ -1,0 +1,111 @@
+--- ogkm610/src/nvidia-modeset/kapi/src/nvkms-kapi.c	2026-10-20 20:09:41
++++ nvrecipe/x/share/nvkms-kapi.planE.c	2026-10-17 16:28:56
+@@ -37,7 +37,23 @@
+ #include "nvkms-kapi-private.h"
+ #include "nvkms-kapi-internal.h"
+ #include "nvkms-kapi-notifiers.h"
++
++/* NMRDIAG: temporary runtime switch (sysctl debug.nvkms_allow_headsurface) so the
++ * HiDPI experiment can compare stock behaviour with headSurface allowed in one boot.
++ * Written by kexts/NVRM/os-nvkms-xnu.cpp.
++ * 0 = stock.
++ * 1 = headSurface experiment: request allowHeadSurfaceInNvKms and express the
++ *     scaled desktop as the head viewport (layer stays scaled -> fails at
++ *     commit=0 validation; kept for reference).
++ * 2 = plan E (viewport scaling): the main layer flips 1:1 at the desktop size
++ *     into a head viewport of the same size; the postcomp head scaler scales
++ *     viewPortIn -> raster. No window scaler, no headSurface.
++ * Default is 2: plan E was verified on hardware (4992x2808 -> 3840x2160 test +
++ * COMMIT both pass, mode holds) and only affects requests with src != dst;
++ * 1:1 modes take the stock path byte for byte. sysctl can still force 0/1. */
++int gNvkmsAllowHeadSurfaceOverride = 2;
+ 
++
+ #include "nv_smg.h"
+ 
+ #include <class/cl0000.h> /* NV01_ROOT/NV01_NULL_OBJECT */
+@@ -3052,6 +3068,20 @@
+                 params->layer[NVKMS_MAIN_LAYER].sizeOut.val.width = layerConfig->dstWidth;
+                 params->layer[NVKMS_MAIN_LAYER].sizeOut.val.height = layerConfig->dstHeight;
+                 params->layer[NVKMS_MAIN_LAYER].sizeOut.specified = TRUE;
++
++                /*
++                 * NMRDIAG plan E (mode 2): never ask the layer to scale.
++                 * A scaled desktop flips 1:1 at the desktop size; the matching
++                 * viewPortSizeIn override below makes the postcomp head scaler
++                 * do viewPortIn -> raster. Covers modesets and later flips,
++                 * so a flip cannot silently reintroduce layer scaling.
++                 */
++                if (gNvkmsAllowHeadSurfaceOverride == 2 &&
++                    (layerConfig->srcWidth != layerConfig->dstWidth ||
++                     layerConfig->srcHeight != layerConfig->dstHeight)) {
++                    params->layer[NVKMS_MAIN_LAYER].sizeOut.val.width = layerConfig->srcWidth;
++                    params->layer[NVKMS_MAIN_LAYER].sizeOut.val.height = layerConfig->srcHeight;
++                }
+             }
+         }
+ 
+@@ -3346,6 +3376,13 @@
+     params->request.commit = commit;
+     params->request.deviceHandle = device->hKmsDevice;
+     params->request.requestedDispsBitMask = 1 << dispIdx;
++
++    /* NMRDIAG: only mode 1 (headSurface experiment) requests headSurface.
++     * Mode 2 (plan E) deliberately does NOT: the layer is 1:1 and the head
++     * viewport scales, so NVKMS must stay in direct-flip (no headSurface). */
++    if (gNvkmsAllowHeadSurfaceOverride == 1) {
++        params->request.allowHeadSurfaceInNvKms = NV_TRUE;
++    }
+ 
+     for (head = 0;
+          head < ARRAY_LEN(requestedConfig->headRequestedConfig); head++) {
+@@ -3457,6 +3494,27 @@
+         paramsHead->viewPortSizeIn.height =
+             headModeSetConfig->mode.timings.vVisible;
+ 
++        /*
++         * NMRDIAG: stock keeps the head viewport at the mode raster, so a scaled
++         * desktop lands on the layer and hits the (never parsed on GB20x) precomp
++         * window scaler. Modes 1 and 2 both express the scaled desktop as the
++         * head viewport so the postcomp head scaler does the scaling; they differ
++         * in whether headSurface is requested (mode 1) or the layer is rewritten
++         * to 1:1 (mode 2, see NvKmsKapiMainLayerConfigToKms).
++         */
++        if (gNvkmsAllowHeadSurfaceOverride) {
++            const struct NvKmsKapiLayerRequestedConfig *lr0 =
++                &headRequestedConfig->layerRequestedConfig[NVKMS_KAPI_LAYER_PRIMARY_IDX];
++            const struct NvKmsKapiLayerConfig *lc0 = &lr0->config;
++
++            if (lc0->surface != NULL &&
++                (lc0->srcWidth != lc0->dstWidth ||
++                 lc0->srcHeight != lc0->dstHeight)) {
++                paramsHead->viewPortSizeIn.width = lc0->srcWidth;
++                paramsHead->viewPortSizeIn.height = lc0->srcHeight;
++            }
++        }
++
+         paramsHead->allowGsync = NV_TRUE;
+         paramsHead->allowAdaptiveSync = NVKMS_ALLOW_ADAPTIVE_SYNC_ALL;
+ 
+@@ -3503,6 +3561,21 @@
+                                  NV_KMS_FLIP_RESULT_INVALID_PARAMS;
+ 
+     if (!status) {
++        /*
++         * NMRDIAG: the upstream 610-setmode-reason.patch logs only when reply.status
++         * is non-SUCCESS. A per-head INVALID_FLIP (head status 6) leaves the top-level
++         * status at SUCCESS and the ioctl returns FALSE, so it fell through silently.
++         */
++        char msg[256];
++        nvkms_snprintf(msg, sizeof(msg),
++                       "[kapi] set mode ioctl FAILED (commit %d): replyTop %d disp0 %d heads %d %d %d %d",
++                       (int)commit, (int)params->reply.status,
++                       (int)params->reply.disp[0].status,
++                       (int)params->reply.disp[0].head[0].status,
++                       (int)params->reply.disp[0].head[1].status,
++                       (int)params->reply.disp[0].head[2].status,
++                       (int)params->reply.disp[0].head[3].status);
++        nvkms_log(NVKMS_LOG_LEVEL_ERROR, NULL, msg);
+         nvKmsKapiLogDeviceDebug(
+             device,
+             "NVKMS_IOCTL_SET_MODE ioctl failed");
